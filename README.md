@@ -1,0 +1,122 @@
+# Pulumi Python AWS VPC Component
+
+Advanced component to build a well-architected VPC that supports a wide range of related resources.
+`pip install pulumi-aws-vpc`
+```
+from pulumi_aws_vpc import VPC
+import pulumi
+
+
+def main():
+    vpc_config = pulumi.Config().get_object("aws_vpc")
+    vpc = VPC("vpc", config=vpc_config)
+    pulumi.export("vpc_id", vpc.id)
+```
+
+## Supported features
+- Amazon Virtual Private Cloud, subnets, route tables
+  - automatic cidr allocation for subnets is supported
+  - references to other resources in the route table are supported
+- Elastic IPs and NAT Gateways
+- Internet Gateway and Virtual Private Gateway
+- Transit Gateway and Cloud WAN attachments
+- Route 53 Profiles [WIP]
+- Flow Logs [WIP]
+- IPv6 [WIP]
+- Endpoints [WIP]
+
+
+### Configuration
+```yaml
+config:
+  aws:region: eu-central-1
+  aws_vpc:
+    name: test_app-dev
+    elastic_ips:
+      # https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/allocate-address.html
+      - {name: nat-az1-eip, tags: {"usage": "nat-gw"}}
+      - {name: nat-az1-eip2, tags: {"usage": "nat-gw"}}
+      - {name: nat-az2-eip}
+      # - {name: lz1-eip, border_group: eu-central-1-ham-1a}
+      # - {name: my-byoip-eip, public_pool: pool-123456789012, ip: 1.2.3.4}  # customer_owner_pool and ipam_pool are supported as well
+    internet_gateway:
+      route_table: ingress
+      tags: {igw-tag: igw-value, common_tag1: igw-override}
+    virtual_gateway:
+      route_table: ingress
+      asn: 65534
+      vpn_connections:
+        - {name: "my-dc1", cgw_ip: 4.3.2.1, bgp_asn: 65100 }
+      tags: {vgw-tag: vgw-value, common_tag1: vgw-override}
+    cidrs:
+    - cidr: 10.10.16.0/22
+      subnets:
+      - {name: int-az1, prefix_length: 24, az_id: euc1-az1, route_table: centralized-egress, tags: {"my-subnet-tag": "test"}}
+      - {name: int-az2, prefix_length: 24, az_id: euc1-az2, route_table: centralized-egress}
+      - {name: ext-az1, prefix_length: 25, az_id: 1, route_table: public}  # az_id: 1 is the same as euc1-az1
+      - {name: ext-az2, prefix_length: 25, az_id: 2, route_table: public}
+      - {name: db-az1, prefix_length: 27, az_id: 1, route_table: private}
+      - {name: db-az2, prefix_length: 27, az_id: 2, route_table: private}
+    - cidr: 100.64.1.0/27
+      subnets:
+      - {name: tgw-az1, prefix_length: 28, az_id: euc1-az1}
+      - {name: tgw-az2, prefix_length: 28, az_id: euc1-az2}
+    route_tables:
+    - name: centralized-egress
+      routes: 
+      - {destination: 1.2.3.4/32, next_hop: "@vgw"}
+      - {destination: 4.3.2.1/32, next_hop: "@natgw:private-nat-az1"}
+      - {destination: 5.6.7.8/32, next_hop: "@natgw:nat-az1"}
+      - {destination: 8.7.6.5/32, next_hop: "@natgw:nat-az2"}
+      - {destination: 0.0.0.0/0, next_hop: "@attachment:tgw"}
+      - {destination: pl-00033ce8444f73270, next_hop: "@igw"}
+    - name: private
+      routes:
+      - {destination: 1.2.3.4/32, next_hop: "@vgw"}
+      - {destination: "@rfc1918", next_hop: "@attachment:tgw"}
+      - {destination: pl-00033ce8444f73270, next_hop: "@igw"}
+    - name: public
+      routes:
+      - {destination: 0.0.0.0/0, next_hop: "@igw"}
+      - {destination: "@rfc1918", next_hop: "@attachment:tgw"}
+    - name: ingress
+      routes: []
+    nat_gateways:
+      - {name: nat-az1, eips: [nat-az1-eip, nat-az1-eip2], subnet: ext-az1, tags: {common_tag1: override_value-nat, my-nat-tag: "test"} }
+      - {name: nat-az2, eips: [nat-az2-eip], subnet: ext-az2}
+      - {name: private-nat-az1, type: private, subnet: tgw-az1 }
+    attachments:
+      - name: tgw
+        type: transit_gateway  # tgw or cwan
+        subnets: [tgw-az1, tgw-az2]
+        tgw_id: tgw-085a3f8a9ef3db56e
+        provider: null  # TODO: define provider structure or reference for tgw association and propagation
+        association_rt: tgw-rtb-060da44771958dbd9
+        propagation_rts: [tgw-rtb-060da44771958dbd9, tgw-rtb-0bfdc0e56703997d1]
+      # - name: cwan
+      #   type: cloudwan
+      #   subnets: [tgw-az1, tgw-az2]
+      #   core_network_id: core-123456789012
+      #   tags: {Segment: dev}
+    endpoints:
+      - {name: s3-gw, type: gateway, service: "s3", route_tables: [private, public] }  # if full service name is not provided, add "com.amazonaws.<region>." prefix
+      - {name: ssm-vpce, type: interface, service: "ssm", subnets: [int-az1, int-az2] }
+      - {name: my-service-vpce, type: interface, service: "svc-123456789012", subnets: [int-az1, int-az2] }
+    dns:
+      profiles:
+      - {id: profile-id}
+    flow_logs:
+      - {name: cwl, type: cloudwatch, log_group_name: "test_app-vpc-flow-logs", role: "arn:aws:iam::123456789012:role/flow-log-role"}
+    tags:
+      vpc_tag1: vpc_value1
+      common_tag1: override_value1
+    common_tags:
+      common_tag1: default_value1
+      common_tag2: default_value2
+      app: test_app
+      environment: dev
+
+```
+
+
+Check examples directory for more examples
