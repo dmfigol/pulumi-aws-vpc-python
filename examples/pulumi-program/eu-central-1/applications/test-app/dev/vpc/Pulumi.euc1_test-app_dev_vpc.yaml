@@ -1,7 +1,7 @@
 config:
   aws:region: eu-central-1
   aws_vpc:
-    name: test_app-dev
+    name: test-app_dev
     elastic_ips:
       # https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/allocate-address.html
       - {name: nat-az1-eip, tags: {"usage": "nat-gw"}}
@@ -18,19 +18,25 @@ config:
       vpn_connections:
         - {name: "my-dc1", cgw_ip: 4.3.2.1, bgp_asn: 65100 }
       tags: {vgw-tag: vgw-value, common_tag1: vgw-override}
-    cidrs:
-    - cidr: 10.10.16.0/22
-      subnets:
-      - {name: int-az1, prefix_length: 24, az_id: euc1-az1, route_table: centralized-egress, tags: {"my-subnet-tag": "test"}}
-      - {name: int-az2, prefix_length: 24, az_id: euc1-az2, route_table: centralized-egress}
-      - {name: ext-az1, prefix_length: 25, az_id: 1, route_table: public}  # az_id: 1 is the same as euc1-az1
-      - {name: ext-az2, prefix_length: 25, az_id: 2, route_table: public}
-      - {name: db-az1, prefix_length: 27, az_id: 1, route_table: private}
-      - {name: db-az2, prefix_length: 27, az_id: 2, route_table: private}
-    - cidr: 100.64.1.0/27
-      subnets:
-      - {name: tgw-az1, prefix_length: 28, az_id: euc1-az1}
-      - {name: tgw-az2, prefix_length: 28, az_id: euc1-az2}
+    cidrs: 
+      ipv4:
+        - {cidr: 10.10.16.0/22}
+        - {cidr: 100.64.1.0/27}
+        # - {ipam_pool: "ipam-pool-123456789012", size: 22}
+      ipv6:
+        - {size: 56}  # amazon provided cidr block
+        - {size: 56} 
+    subnets:
+      - {name: int-az1, az_id: euc1-az1, ipv4: {size: 24}, ipv6: {}, route_table: centralized-egress, tags: {"my-subnet-tag": "test"}}
+      - {name: int-az2, az_id: euc1-az2, ipv4: {size: 24}, ipv6: {}, route_table: centralized-egress}
+      - {name: ext-az1, az_id: 1, ipv4: {size: 25}, route_table: public}  # az_id: 1 is the same as euc1-az1
+      - {name: ext-az2, az_id: 2, ipv4: {size: 25}, route_table: public}
+      - {name: db-az1, az_id: 1, ipv4: {size: 27}, route_table: private}
+      - {name: db-az2, az_id: 2, ipv4: {size: 27}, route_table: private}
+      - {name: ipv6only-az1, az_id: 1, ipv6: {cidr_num: 2}, route_table: private}
+      - {name: ipv6only-az2, az_id: 2, ipv6: {cidr_num: 2}, route_table: private}
+      - {name: tgw-az1, ipv4: {cidr: 100.64.1.0/28, cidr_num: 2}, ipv6: {cidr_num: 2}, az_id: euc1-az1}
+      - {name: tgw-az2, ipv4: {cidr: 100.64.1.16/28, cidr_num: 2}, ipv6: {cidr_num: 2}, az_id: euc1-az2}
     route_tables:
     - name: centralized-egress
       routes: 

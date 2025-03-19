@@ -1,0 +1,29 @@
+name: vpc-multilang
+description: A VPC created with multilang component
+runtime: yaml
+plugins:
+  providers:
+    - name: aws-networking
+      path: ../../src/pulumi_aws_vpc
+resources:
+  vpc-multi:
+    type: aws-networking:index:VPC
+    properties:
+      name: test-vpc
+      # cidr: 10.0.0.0/16
+      # new_arg: "123"
+      cidrs:
+        ipv4:
+          - {cidr: 10.10.16.0/22}
+          - {cidr: 100.64.1.0/27}
+        ipv6:
+          - {size: 56}
+      subnets:
+          - {name: int-az1, azId: euc1-az1, ipv4: {cidrNum: 1, size: 24}, ipv6: {cidrNum: 1}, routeTable: centralized-egress, tags: {"my-subnet-tag": "test"}}
+      tags:
+        vpc-tag-key: "vpc-tag-value"
+      commonTags:
+        common-tag-key: "common-tag-value"
+outputs:
+  vpcId: ${vpc-multi.vpcId}
+  cidrs: ${vpc-multi.cidrs}

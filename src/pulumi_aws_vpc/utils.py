@@ -1,8 +1,11 @@
 import netaddr
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def divide_supernet_into_subnets(supernet: str, prefix_lengths: list[int]) -> list[str]:
-    """Divide a supernet into subnets of arbitrary prefix lengths.
+    """Divide a IPv4 or IPv6supernet into subnets of arbitrary prefix lengths.
 
     Uses smart allocation of subnets using gaps between allocated blocks.
 
@@ -18,6 +21,8 @@ def divide_supernet_into_subnets(supernet: str, prefix_lengths: list[int]) -> li
     ['10.10.10.0/26', '10.10.10.128/25', '10.10.10.64/26']
     >>> divide_supernet_into_subnets("10.10.10.0/24", [26, 25, 27, 27])
     ['10.10.10.0/26', '10.10.10.128/25', '10.10.10.64/27', '10.10.10.96/27']
+    >>> divide_supernet_into_subnets("2001::1/56", [64,64,64,64])
+    ['2001::/64', '2001:0:0:1::/64', '2001:0:0:2::/64', '2001:0:0:3::/64'
 
     In comparison with Terraform cidrsubnets function:
     > cidrsubnets("10.10.10.0/24", [2, 2, 1])
@@ -25,6 +30,7 @@ def divide_supernet_into_subnets(supernet: str, prefix_lengths: list[int]) -> li
     > cidrsubnets("10.10.10.0/24", [2, 1, 2])
     Error: Invalid function argument
     """
+    logger.debug(f"Dividing {supernet} into subnets of size: {prefix_lengths}")
     subnets = []
     free_blocks = [netaddr.IPNetwork(supernet)]
     for prefix in prefix_lengths:
@@ -45,5 +51,6 @@ def divide_supernet_into_subnets(supernet: str, prefix_lengths: list[int]) -> li
             )
             free_blocks = netaddr.cidr_merge(free_blocks)
             break
+    logger.debug(f"Resulting subnets: {subnets}")
 
     return subnets

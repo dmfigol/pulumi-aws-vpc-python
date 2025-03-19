@@ -3,41 +3,48 @@ from pydantic import ConfigDict, model_validator, Field
 from pydantic.networks import IPv4Address
 from enum import Enum
 from typing import Optional, Any
-from typing_extensions import Self
-
-from pulumi_aws_vpc.utils import divide_supernet_into_subnets
+from typing_extensions import Self, TypedDict
+from pulumi import Input, Output
 
 
 class BaseModel(pydantic.BaseModel):
     model_config = ConfigDict(extra="forbid", coerce_numbers_to_str=True)
 
 
-class Subnet(BaseModel):
+class CoreModel(pydantic.BaseModel):
+    model_config = ConfigDict(extra="allow", coerce_numbers_to_str=True)
+
+
+class IPv4SubnetCidr(BaseModel):
+    cidr: Optional[str] = None
+    cidr_num: int = 1
+    size: Optional[int] = None
+
+
+class IPv6SubnetCidr(BaseModel):
+    cidr: Optional[str] = None
+    cidr_num: int = 1
+    size: Optional[int] = 64
+
+
+class Subnet(CoreModel):
     name: str
     az_id: str
-    cidr: Optional[str] = None
-    prefix_length: Optional[int] = None
+    ipv4: Optional[IPv4SubnetCidr] = None
+    ipv6: Optional[IPv6SubnetCidr] = None
     route_table: Optional[str] = None
     tags: dict[str, str] = {}
 
 
 class VPCCidr(BaseModel):
-    cidr: str
-    subnets: list[Subnet]
+    cidr: Optional[str] = None
+    size: Optional[int] = None
+    ipam_pool: Optional[str] = None
 
-    def get_subnets(self) -> list[Subnet]:
-        auto_allocate_subnets = [
-            subnet
-            for subnet in self.subnets
-            if subnet.prefix_length and not subnet.cidr
-        ]
-        if auto_allocate_subnets:
-            cidrs = divide_supernet_into_subnets(
-                self.cidr, [subnet.prefix_length for subnet in auto_allocate_subnets]
-            )
-            for cidr, subnet in zip(cidrs, auto_allocate_subnets):
-                subnet.cidr = cidr
-        return self.subnets
+
+class VPCCidrs(BaseModel):
+    ipv4: list[VPCCidr]
+    ipv6: list[VPCCidr]
 
 
 class Route(BaseModel):
@@ -45,25 +52,25 @@ class Route(BaseModel):
     next_hop: str
 
 
-class RouteTable(BaseModel):
+class RouteTable(CoreModel):
     name: str
     routes: list[Route]
     tags: dict[str, str] = {}
 
 
-class VirtualGateway(BaseModel):
+class VirtualGateway(CoreModel):
     asn: int
     route_table: Optional[str] = None
     tags: dict[str, str] = {}
     vpn_connections: list[Any] = []
 
 
-class InternetGateway(BaseModel):
+class InternetGateway(CoreModel):
     route_table: str
     tags: dict[str, str] = {}
 
 
-class ElasticIP(BaseModel):
+class ElasticIP(CoreModel):
     name: str
     border_group: Optional[str] = Field(
         None, serialization_alias="network_border_group"
@@ -88,7 +95,7 @@ class AttachmentType(str, Enum):
     CLOUDWAN = "cloudwan"
 
 
-class VPCAttachment(BaseModel):
+class VPCAttachment(CoreModel):
     name: str
     type: AttachmentType
     subnets: list[str]
@@ -105,7 +112,7 @@ class NATGatewayType(str, Enum):
     PRIVATE = "private"
 
 
-class NATGateway(BaseModel):
+class NATGateway(CoreModel):
     name: str
     type: NATGatewayType = NATGatewayType.PUBLIC
     subnet: str
@@ -127,12 +134,13 @@ class NATGateway(BaseModel):
         return self.type is NATGatewayType.PUBLIC
 
 
-class VPCConfig(BaseModel):
+class VPCConfig(CoreModel):
     name: str
     internet_gateway: Optional[InternetGateway] = None
     virtual_gateway: Optional[VirtualGateway] = None
     elastic_ips: list[ElasticIP] = []
-    cidrs: list[VPCCidr]
+    cidrs: VPCCidrs
+    subnets: list[Subnet] = []
     route_tables: list[RouteTable]
     nat_gateways: list[NATGateway] = []
     attachments: list[VPCAttachment] = []
@@ -144,10 +152,53 @@ class VPCConfig(BaseModel):
 
     @property
     def primary_cidr(self) -> VPCCidr:
-        return self.cidrs[0]
+        return self.cidrs.ipv4[0]
+
+
+class VPCIPv4CidrArgs(TypedDict):
+    cidr: Optional[str] = None
+    size: Optional[int] = None
+    ipam_pool: Optional[str] = None
+
+
+class VPCIPv6CidrArgs(TypedDict):
+    cidr: Optional[str] = None
+    size: Optional[int] = 56
+    ipam_pool: Optional[str] = None
+
+
+class SubnetIPv4CidrArgs(TypedDict):
+    cidr_num: int = 1
+    cidr: Optional[str] = None
+    size: Optional[int] = None
+
+
+class SubnetIPv6CidrArgs(TypedDict):
+    cidr_num: int = 1
+    cidr: Optional[str] = None
+    size: Optional[int] = 64
+
+
+class SubnetArgs(TypedDict):
+    name: str
+    az_id: str
+    ipv4: Optional[SubnetIPv4CidrArgs] = None
+    ipv6: Optional[SubnetIPv6CidrArgs] = None
+    route_table: Optional[str] = None
+    tags: dict[str, str] = {}
+
+
+class VPCCidrArgs(TypedDict):
+    ipv4: list[VPCIPv4CidrArgs]
+    ipv6: list[VPCIPv6CidrArgs]
+
+
+class VPCArgs(TypedDict):
+    name: Input[str]
+    # cidr: Input[str]
+    cidrs: Input[VPCCidrArgs]
+    subnets: Input[list[SubnetArgs]]
 
     @property
-    def secondary_cidrs(self) -> list[VPCCidr]:
-        if len(self.cidrs) < 2:
-            raise ValueError(f"VPC {self.name} has only {len(self.cidrs)} CIDRs")
-        return self.cidrs[1:]
+    def primary_cidr(self) -> VPCCidr:
+        return self.cidrs.ipv4[0]

@@ -1,0 +1,12 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "pulumi",
+            "request": "launch",
+            "name": "pulumi preview",
+            "command": "preview",
+            "workDir": "${workspaceFolder}/examples/pulumi-yaml"
+        }
+    ]
+}

@@ -2,9 +2,14 @@ import pulumi_aws as aws
 import pulumi
 from pulumi import ResourceOptions, ComponentResource, Output
 from typing import Any, Union, NamedTuple, Optional, Tuple
+from collections import defaultdict
 
-from pulumi_aws_vpc.config import VPCConfig, AttachmentType
-from pulumi_aws_vpc.constants import RESOURCE_TYPE
+from config import VPCConfig, AttachmentType
+from args import VPCArgs
+from utils import divide_supernet_into_subnets
+
+
+RESOURCE_TYPE = "aws-networking:index:VPC"
 
 
 class RouteTableInfo(NamedTuple):
@@ -38,60 +43,75 @@ class AttachmentInfo(NamedTuple):
     propagations: list[aws.ec2.RouteTableAssociation] = []
 
 
+class SubnetAutoAllocate(NamedTuple):
+    cidr: Output[str]
+    vpc_cidr: Union[
+        aws.ec2.VpcIpv4CidrBlockAssociation, aws.ec2.VpcIpv6CidrBlockAssociation, None
+    ]
+
+
 class VPC(ComponentResource):
+    vpc_id: Output[str]
+    cidrs: Output[dict[str, list[str]]]
+
     def __init__(
         self,
         name: str,
-        config: Union[VPCConfig, dict[str, Any]],
+        # config: Union[VPCConfig, dict[str, Any]],
+        args: VPCArgs,
         opts: ResourceOptions = None,
     ):
-        if isinstance(config, dict):
-            config = VPCConfig(**config)
-        self.config = config
+        # if isinstance(config, dict):
+        #     config = VPCConfig(**config)
+        # self.config = VPCConfig()
+        # self.config = 
         super().__init__(RESOURCE_TYPE, name, None, opts)
 
-        self.common_tags = config.common_tags
+        # self.common_tags = config.common_tags
+        self.vpc = self._create_vpc(args)
+        self.secondary_ipv4_cidrs = self._create_secondary_cidrs(args)
+        # self.vpc_id = self.vpc.id
+        # self.ipv6_cidrs = self._create_ipv6_cidrs(args)
+        # self._subnet_to_ipv4_cidr = self._assign_ipv4_cidrs()
+        # self._subnet_to_ipv6_cidr = self._assign_ipv6_cidrs()
 
-        self.vpc = self._create_vpc(config)
-        self.secondary_cidrs = VPC._create_secondary_cidrs(config, vpc=self.vpc)
-        self.elastic_ips = self._create_elastic_ips(config)
+        # self.subnets = self._create_subnets()
 
-        self.subnets = VPC._create_subnets(
-            config,
-            vpc=self.vpc,
-            secondary_cidrs=self.secondary_cidrs,
+        # self.nat_gateways = VPC._create_nat_gateways(
+        #     config, subnets=self.subnets, elastic_ips=self.elastic_ips
+        # )
+
+        # self.internet_gateway = VPC._create_internet_gateway(config, vpc=self.vpc)
+
+        # self.virtual_gateway = VPC._create_virtual_gateway(config, vpc=self.vpc)
+
+        # self.attachments = VPC._create_attachments(
+        #     config, subnets=self.subnets, vpc=self.vpc
+        # )
+
+        # self.route_tables = VPC._create_route_tables(
+        #     config,
+        #     vpc=self.vpc,
+        #     igw_id=self.igw_id,
+        #     vgw_id=self.vgw_id,
+        #     attachments=self.attachments,
+        #     nat_gateways=self.nat_gateways,
+        # )
+
+        # self.rt_associations = VPC._create_route_table_associations(
+        #     self.route_tables,
+        #     self.subnets,
+        #     igw_info=self.internet_gateway,
+        #     vgw_info=self.virtual_gateway,
+        #     vpc=self.vpc,
+        # )
+
+        # self.register_outputs(self.outputs)
+        self.register_outputs(
+            {
+                "vpc_id": self.vpc.id,
+            }
         )
-
-        self.nat_gateways = VPC._create_nat_gateways(
-            config, subnets=self.subnets, elastic_ips=self.elastic_ips
-        )
-
-        self.internet_gateway = VPC._create_internet_gateway(config, vpc=self.vpc)
-
-        self.virtual_gateway = VPC._create_virtual_gateway(config, vpc=self.vpc)
-
-        self.attachments = VPC._create_attachments(
-            config, subnets=self.subnets, vpc=self.vpc
-        )
-
-        self.route_tables = VPC._create_route_tables(
-            config,
-            vpc=self.vpc,
-            igw_id=self.igw_id,
-            vgw_id=self.vgw_id,
-            attachments=self.attachments,
-            nat_gateways=self.nat_gateways,
-        )
-
-        self.rt_associations = VPC._create_route_table_associations(
-            self.route_tables,
-            self.subnets,
-            igw_info=self.internet_gateway,
-            vgw_info=self.virtual_gateway,
-            vpc=self.vpc,
-        )
-
-        self.register_outputs(self.outputs)
 
     @staticmethod
     def get_az_ids() -> list[str]:
@@ -102,32 +122,56 @@ class VPC(ComponentResource):
         """euc1-az1 -> euc1-az"""
         return VPC.get_az_ids()[0][:-1]
 
-    def _create_vpc(self, config: VPCConfig) -> aws.ec2.Vpc:
-        result = aws.ec2.Vpc(
+    def _create_vpc(self, args: VPCArgs) -> aws.ec2.Vpc:
+        vpc = aws.ec2.Vpc(
             "vpc",
-            cidr_block=config.primary_cidr.cidr,
+            # cidr_block=args.primary_cidr.cidr,
+            # cidr_block=args.get("cidr"),
+            cidr_block=args["cidrs"]["ipv4"][0]["cidr"],
             instance_tenancy="default",
             enable_dns_hostnames=True,
             enable_dns_support=True,
-            tags=VPC.build_tags(config.common_tags, config.tags, Name=config.name),
+            tags=VPC.build_tags(args["common_tags"], args["tags"], Name=args["name"]),
             opts=ResourceOptions(parent=self),
         )
+        return vpc
+
+    def _create_secondary_cidrs(
+        self, args: VPCArgs
+    ) -> list[aws.ec2.VpcIpv4CidrBlockAssociation]:
+        result = []
+        if len(args["cidrs"]["ipv4"]) <= 1:
+            return result
+        for i, cidr_cfg in enumerate(args["cidrs"]["ipv4"][1:]):
+            secondary_cidr = aws.ec2.VpcIpv4CidrBlockAssociation(
+                f"{i + 2}|{cidr_cfg.get('cidr') or '/' + cidr_cfg.get('size')}",
+                vpc_id=self.vpc.id,
+                cidr_block=cidr_cfg.get("cidr"),
+                opts=ResourceOptions(parent=self.vpc),
+            )
+            result.append(secondary_cidr)
         return result
 
-    @staticmethod
-    def _create_secondary_cidrs(
-        config: VPCConfig, vpc: aws.ec2.Vpc
-    ) -> dict[str, aws.ec2.VpcIpv4CidrBlockAssociation]:
-        result = {}
-        for cidr in config.secondary_cidrs:
-            secondary_cidr = aws.ec2.VpcIpv4CidrBlockAssociation(
-                cidr.cidr,
+    def _create_ipv6_cidrs(
+        self, args: VPCArgs
+    ) -> list[aws.ec2.VpcIpv6CidrBlockAssociation]:
+        ipv6_cidrs = []
+        if config.cidrs.ipv6 is None:
+            return ipv6_cidrs
+        for i, cidr_cfg in enumerate(config.cidrs.ipv6):
+            auto_assign = cidr_cfg.cidr is None and cidr_cfg.ipam_pool is None
+            netmask_length = None if auto_assign else cidr_cfg.size
+            ipv6_cidr = aws.ec2.VpcIpv6CidrBlockAssociation(
+                f"{i + 1}|{cidr_cfg.cidr or cidr_cfg.size}",
                 vpc_id=vpc.id,
-                cidr_block=cidr.cidr,
+                assign_generated_ipv6_cidr_block=auto_assign,
+                ipv6_cidr_block=cidr_cfg.cidr,
+                ipv6_ipam_pool_id=cidr_cfg.ipam_pool,
+                ipv6_netmask_length=netmask_length,
                 opts=ResourceOptions(parent=vpc),
             )
-            result[cidr.cidr] = secondary_cidr
-        return result
+            ipv6_cidrs.append(ipv6_cidr)
+        return ipv6_cidrs
 
     def _create_elastic_ips(self, config: VPCConfig) -> dict[str, aws.ec2.Eip]:
         result = {}
@@ -143,43 +187,70 @@ class VPC(ComponentResource):
             result[eip_config.name] = eip
         return result
 
-    @staticmethod
     def _create_subnets(
-        config: VPCConfig,
-        vpc: aws.ec2.Vpc,
-        secondary_cidrs: dict[str, aws.ec2.VpcIpv4CidrBlockAssociation],
+        self,
     ) -> dict[str, aws.ec2.Subnet]:
         result = {}
         az_id_prefix = VPC.get_az_id_prefix()
-        for vpc_cidr in config.cidrs:
-            for subnet_config in vpc_cidr.get_subnets():
-                if vpc_cidr == config.primary_cidr:
-                    dependencies = []
-                else:
-                    dependencies = [secondary_cidrs[vpc_cidr.cidr]]
 
-                if subnet_config.az_id.isdigit():
-                    az_id = f"{az_id_prefix}{subnet_config.az_id}"
-                else:
-                    az_id = subnet_config.az_id
+        for subnet_config in self.config.subnets:
+            dependencies = []
 
-                subnet = aws.ec2.Subnet(
-                    subnet_config.name,
-                    vpc_id=vpc.id,
-                    availability_zone_id=az_id,
-                    cidr_block=subnet_config.cidr,
-                    tags=VPC.build_tags(
-                        config.common_tags,
-                        subnet_config.tags,
-                        Name=f"{config.name}-{subnet_config.name}",
-                    ),
-                    opts=ResourceOptions(
-                        depends_on=dependencies, parent=vpc, delete_before_replace=True
-                    ),
-                )
-                result[subnet_config.name] = SubnetInfo(
-                    subnet=subnet, route_table=subnet_config.route_table
-                )
+            ipv4_cidr = None
+            if subnet_config.ipv4:
+                if subnet_config.ipv4.cidr is not None:
+                    ipv4_cidr = subnet_config.ipv4.cidr
+                elif subnet_config.name in self._subnet_to_ipv4_cidr:
+                    ipv4_cidr = self._subnet_to_ipv4_cidr[subnet_config.name]
+                else:
+                    raise ValueError(
+                        f"IPv4 CIDR for subnet {subnet_config.name} not found"
+                    )
+
+                if subnet_config.ipv4.cidr_num > 1:
+                    dependencies.append(
+                        self.secondary_ipv4_cidrs[subnet_config.ipv4.cidr_num - 2]
+                    )
+
+            ipv6_cidr = None
+            if subnet_config.ipv6:
+                if subnet_config.ipv6.cidr is not None:
+                    ipv6_cidr = subnet_config.ipv6.cidr
+                elif subnet_config.name in self._subnet_to_ipv6_cidr:
+                    ipv6_cidr = self._subnet_to_ipv6_cidr[subnet_config.name]
+                else:
+                    raise ValueError(
+                        f"IPv6 CIDR for subnet {subnet_config.name} not found"
+                    )
+                dependencies.append(self.ipv6_cidrs[subnet_config.ipv6.cidr_num - 1])
+
+            if subnet_config.az_id.isdigit():
+                az_id = f"{az_id_prefix}{subnet_config.az_id}"
+            else:
+                az_id = subnet_config.az_id
+
+            subnet = aws.ec2.Subnet(
+                subnet_config.name,
+                vpc_id=self.vpc.id,
+                availability_zone_id=az_id,
+                cidr_block=ipv4_cidr,
+                ipv6_cidr_block=ipv6_cidr,
+                ipv6_native=ipv4_cidr is None,
+                enable_dns64=ipv6_cidr is not None,
+                assign_ipv6_address_on_creation=ipv6_cidr is not None,
+                tags=VPC.build_tags(
+                    self.config.common_tags,
+                    subnet_config.tags,
+                    Name=f"{self.config.name}-{subnet_config.name}",
+                ),
+                opts=ResourceOptions(
+                    depends_on=dependencies, parent=self.vpc, delete_before_replace=True
+                ),
+                **subnet_config.model_extra,
+            )
+            result[subnet_config.name] = SubnetInfo(
+                subnet=subnet, route_table=subnet_config.route_table
+            )
         return result
 
     @staticmethod
@@ -453,18 +524,20 @@ class VPC(ComponentResource):
     @property
     def outputs(self) -> dict[str, Any]:
         result = {
-            "id": self.vpc.id,
-            "cidrs": [
-                self.vpc.cidr_block,
-            ]
-            + [sc.cidr_block for sc in self.secondary_cidrs.values()],
-            "subnets": {
-                subnet_name: {
-                    "id": subnet_info.subnet.id,
-                    "cidr": subnet_info.subnet.cidr_block,
-                }
-                for subnet_name, subnet_info in self.subnets.items()
+            "vpc_id": self.vpc.id,
+            "cidrs": {
+                "ipv4": [self.vpc.cidr_block]
+                + [sc.cidr_block for sc in self.secondary_ipv4_cidrs],
+                "ipv6": [],
             },
+            # "subnets": {
+            #     subnet_name: {
+            #         "id": subnet_info.subnet.id,
+            #         "ipv4_cidr": subnet_info.subnet.cidr_block,
+            #         "ipv6_cidr": subnet_info.subnet.ipv6_cidr_block,
+            #     }
+            #     for subnet_name, subnet_info in self.subnets.items()
+            # },
         }
         return result
 
@@ -475,18 +548,64 @@ class VPC(ComponentResource):
         return self.virtual_gateway.vgw.id
 
     @property
+    def cidrs(self) -> Output[dict[str, list[str]]]:
+        return {
+            "ipv4": [self.vpc.cidr_block] + [sc.cidr_block for sc in self.secondary_ipv4_cidrs],
+            "ipv6": [],
+        }
+
+    @property
     def igw_id(self) -> Optional[Output[str]]:
         if self.internet_gateway is None:
             return None
         return self.internet_gateway.igw.id
 
     @property
-    @pulumi.getter(name="vpcId")
     def vpc_id(self) -> Output[str]:
-        return pulumi.get(self, "vpc_id")
+        return self.vpc.id
+
+    # @property
+    # @pulumi.getter(name="vpcId")
+    # def vpc_id(self) -> Output[str]:
+    #     return pulumi.get(self, "vpc_id")
 
     @staticmethod
     def build_tags(
         common_tags: dict[str, str], tags: dict[str, str], **kwargs: dict[str, str]
     ) -> dict[str, str]:
         return {**common_tags, **kwargs, **tags}
+
+    def _assign_ipv4_cidrs(self) -> dict[str, Output[str]]:
+        ipv4_cidrs = [self.vpc.cidr_block] + [
+            sc.cidr_block for sc in self.secondary_ipv4_cidrs
+        ]
+        grouped_subnets = defaultdict(list)
+        for subnet in self.config.subnets:
+            if subnet.ipv4 is not None and subnet.ipv4.cidr is None:
+                grouped_subnets[subnet.ipv4.cidr_num - 1].append(subnet)
+
+        result = {}
+        for i, subnets in grouped_subnets.items():
+            subnet_sizes = [subnet.ipv4.size for subnet in subnets]
+            subnet_cidrs = ipv4_cidrs[i].apply(
+                lambda ipv4_cidr: divide_supernet_into_subnets(ipv4_cidr, subnet_sizes)
+            )
+            for j, subnet in enumerate(subnets):
+                result[subnet.name] = subnet_cidrs.apply(lambda cidrs, j=j: cidrs[j])
+        return result
+
+    def _assign_ipv6_cidrs(self) -> dict[str, Output[str]]:
+        grouped_subnets = defaultdict(list)
+        for subnet in self.config.subnets:
+            if subnet.ipv6 is not None and subnet.ipv6.cidr is None:
+                grouped_subnets[subnet.ipv6.cidr_num - 1].append(subnet)
+
+        result = {}
+        for i, subnets in grouped_subnets.items():
+            subnet_sizes = [subnet.ipv6.size for subnet in subnets]
+            subnet_cidrs = self.ipv6_cidrs[i].ipv6_cidr_block.apply(
+                lambda ipv6_cidr: divide_supernet_into_subnets(ipv6_cidr, subnet_sizes)
+            )
+            for j, subnet in enumerate(subnets):
+                result[subnet.name] = subnet_cidrs.apply(lambda cidrs, j=j: cidrs[j])
+        return result
