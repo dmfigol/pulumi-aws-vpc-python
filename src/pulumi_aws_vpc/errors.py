@@ -1,0 +1,2 @@
+class VPCConfigError(Exception):
+    pass

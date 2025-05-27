@@ -1,4 +1,5 @@
 import netaddr
+import ipaddress
 
 
 def divide_supernet_into_subnets(supernet: str, prefix_lengths: list[int]) -> list[str]:
@@ -26,6 +27,9 @@ def divide_supernet_into_subnets(supernet: str, prefix_lengths: list[int]) -> li
     Error: Invalid function argument
     """
     subnets = []
+    if not prefix_lengths:
+        return subnets
+
     free_blocks = [netaddr.IPNetwork(supernet)]
     for prefix in prefix_lengths:
         if not free_blocks:
