@@ -21,10 +21,8 @@ YAML example is below:
 name: pulumi-aws-vpc-stacks
 description: Pulumi VPC stacks deployed with YAML
 runtime: yaml
-plugins:
-  providers:
-    - name: aws-networking
-      path: ../../
+packages:
+  aws-networking: https://github.com/dmfigol/pulumi-aws-vpc-python@0.0.0-x9bc475e6cbf54f2baa2b0d2575fceee3a80acffb  # added with pulumi package add https://github.com/dmfigol/pulumi-aws-vpc-pytho
 resources:
   vpc:
     type: aws-networking:index:VPC

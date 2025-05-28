@@ -7,5 +7,6 @@ resources:
     properties: ${vpcArgs}
 outputs:
   vpcId: ${vpc.vpcId}
-# packages:
-#   aws-networking: ../../@0.0.0
+packages:
+  aws-networking: https://github.com/dmfigol/pulumi-aws-vpc-python@0.0.0-x9bc475e6cbf54f2baa2b0d2575fceee3a80acffb
+  # aws-networking: ../../@0.0.0  # local

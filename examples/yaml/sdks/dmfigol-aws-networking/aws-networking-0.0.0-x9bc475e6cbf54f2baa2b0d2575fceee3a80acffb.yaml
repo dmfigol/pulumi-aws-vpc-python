@@ -1,0 +1,4 @@
+packageDeclarationVersion: 1
+name: aws-networking
+version: 0.0.0-x9bc475e6cbf54f2baa2b0d2575fceee3a80acffb
+downloadUrl: git://github.com/dmfigol/pulumi-aws-vpc-python
