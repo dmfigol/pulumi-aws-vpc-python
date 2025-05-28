@@ -1,0 +1,13 @@
+name: pulumi-aws-vpc-stacks
+description: Pulumi VPC stacks deployed with YAML
+runtime: yaml
+plugins:
+  providers:
+    - name: aws-networking
+      path: ../../
+resources:
+  vpc:
+    type: aws-networking:index:VPC
+    properties: ${vpcArgs}
+outputs:
+  vpcId: ${vpc.vpcId}
